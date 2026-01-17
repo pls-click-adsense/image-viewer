@@ -2,17 +2,88 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>画像抽出くん（再修正版）</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>漫画ビューア</title>
     <style>
-        body { font-family: sans-serif; padding: 20px; }
-        img { margin: 5px; border: 1px solid #ddd; max-width: 150px; height: auto; display: inline-block; }
-        #result { margin-top: 20px; border-top: 1px solid #eee; padding-top: 10px; }
+        /* 黒ベースのデザインで漫画を読みやすくするよ */
+        body { 
+            font-family: sans-serif; 
+            margin: 0; 
+            padding: 0; 
+            background: #121212; 
+            color: #eeeeee; 
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* 入力エリアのスタイル */
+        .controls {
+            width: 100%;
+            max-width: 600px;
+            padding: 20px;
+            box-sizing: border-box;
+            text-align: center;
+            background: #1f1f1f;
+            position: sticky; /* スクロールしても入力欄を上に固定 */
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        }
+
+        input[type="text"] {
+            width: 80%;
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        /* 画像を表示するエリア */
+        #result {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 10px;
+        }
+
+        /* 画像の設定：横幅いっぱい、縦に並べる */
+        #result img {
+            width: 100%;
+            max-width: 900px; /* 広がりすぎて画質が落ちないように制限（好みで変えてね） */
+            height: auto;
+            margin-bottom: 0; /* ページ間の隙間をなくす */
+            display: block;
+        }
+
+        .status {
+            margin: 20px;
+            color: #aaa;
+        }
     </style>
 </head>
 <body>
-    <h3>見たいサイトのURLを入れてね</h3>
-    <input type="text" id="urlInput" placeholder="https://www.google.com" style="width: 70%;">
-    <button onclick="getImages()">画像を表示</button>
+
+    <div class="controls">
+        <h3>サイトのURLを入れてね</h3>
+        <input type="text" id="urlInput" placeholder="https://example.com/manga/1">
+        <button onclick="getImages()">表示開始</button>
+    </div>
+
     <div id="result"></div>
 
     <script>
@@ -20,21 +91,26 @@
             const input = document.getElementById('urlInput').value.trim();
             const resultDiv = document.getElementById('result');
             
-            // httpから始まってない場合は補完する
+            if (!input) {
+                alert('URLを入れてね！');
+                return;
+            }
+
             let targetUrl = input;
             if (!targetUrl.startsWith('http')) {
                 targetUrl = 'https://' + targetUrl;
             }
 
-            resultDiv.innerHTML = '読み込み中...（少し時間がかかるよ）';
+            resultDiv.innerHTML = '<div class="status">読み込み中...（画像が多いと時間がかかるよ）</div>';
 
             try {
+                // CORS回避のためのプロキシ
                 const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
                 const response = await fetch(proxyUrl);
                 const data = await response.json();
                 
                 if (!data.contents) {
-                    throw new Error('サイトの中身が空っぽか、アクセス拒否されたよ');
+                    throw new Error('ページの中身を取得できなかったよ。');
                 }
 
                 const parser = new DOMParser();
@@ -44,28 +120,33 @@
 
                 resultDiv.innerHTML = ''; 
 
-                if (images.length === 0) {
-                    resultDiv.innerHTML = '画像が1つも見つかりませんでした。';
-                    return;
-                }
-
+                let count = 0;
                 images.forEach(img => {
                     let src = img.getAttribute('src');
-                    if (!src || src.startsWith('data:')) return; // base64画像はスキップ
+                    
+                    // 不要な画像（アイコンや極小画像）を除外
+                    if (!src || src.startsWith('data:')) return;
 
-                    // 相対パスを絶対パス（完全な住所）に直す
                     try {
                         const absoluteUrl = new URL(src, baseUrl.href).href;
+                        
                         const newImg = document.createElement('img');
                         newImg.src = absoluteUrl;
+                        
+                        // 画像が読み込めなかった時のエラーハンドリング
+                        newImg.onerror = () => newImg.style.display = 'none';
+                        
                         resultDiv.appendChild(newImg);
-                    } catch (e) {
-                        // 無効なURLは無視
-                    }
+                        count++;
+                    } catch (e) {}
                 });
 
+                if (count === 0) {
+                    resultDiv.innerHTML = '<div class="status">画像が見つかりませんでした。</div>';
+                }
+
             } catch (e) {
-                resultDiv.innerHTML = '<span style="color:red;">エラー: ' + e.message + '</span>';
+                resultDiv.innerHTML = `<div class="status" style="color:red;">エラー: ${e.message}</div>`;
                 console.error(e);
             }
         }
