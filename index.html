@@ -3,19 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>漫画縦読みビューア（リスト解析版）</title>
+    <title>漫画縦読みビューア（ボタン修正版）</title>
     <style>
         body { font-family: sans-serif; margin: 0; padding: 0; background: #000; color: #fff; }
         .controls { padding: 40px 20px; text-align: center; background: #111; position: relative; z-index: 2000; }
         input[type="text"] { width: 80%; padding: 12px; background: #222; color: #fff; border: 1px solid #333; border-radius: 5px; font-size: 16px; }
         button { margin-top: 15px; padding: 12px 25px; background: #cf1010; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; }
+        
         #result { display: flex; flex-direction: column; align-items: center; width: 100%; }
         #result img { width: 100%; max-width: 900px; height: auto; display: block; }
+        
+        /* タップ判定エリア */
         .tap-area { position: fixed; top: 0; height: 100vh; width: 50%; z-index: 1000; cursor: pointer; display: none; }
         #left-tap { left: 0; }
         #right-tap { right: 0; }
-        #next-chap-area { display: none; padding: 60px 20px; text-align: center; background: #111; width: 100%; box-sizing: border-box; }
-        .next-btn { background: #28a745; padding: 20px 40px; font-size: 20px; text-decoration: none; color: white; border-radius: 10px; display: inline-block; font-weight: bold; cursor: pointer; }
+        
+        /* 次の話ボタンエリア */
+        #next-chap-area { 
+            display: none; 
+            padding: 80px 20px; 
+            text-align: center; 
+            background: #111; 
+            width: 100%; 
+            box-sizing: border-box; 
+            position: relative; 
+            z-index: 2000; /* ←ここ！タップエリア(1000)より上に設定 */
+        }
+        .next-btn { 
+            background: #28a745; 
+            padding: 25px 50px; 
+            font-size: 22px; 
+            text-decoration: none; 
+            color: white; 
+            border-radius: 12px; 
+            display: inline-block; 
+            font-weight: bold; 
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
         .status { margin: 20px; color: #888; }
     </style>
 </head>
@@ -23,7 +48,7 @@
 
     <div id="setup" class="controls">
         <h2>漫画のURLを入力</h2>
-        <input type="text" id="urlInput" placeholder="https://mangarw.com/read?id=82055">
+        <input type="text" id="urlInput" placeholder="https://...">
         <br>
         <button onclick="getImages()">読み込み開始</button>
     </div>
@@ -34,7 +59,7 @@
     <div id="result"></div>
 
     <div id="next-chap-area">
-        <a id="nextLink" href="#" class="next-btn" onclick="goNextChapter(event)">次の話を読み込む</a>
+        <a id="nextLink" class="next-btn" onclick="goNextChapter(event)">次の話を読み込む</a>
     </div>
 
     <script>
@@ -62,30 +87,22 @@
                 const doc = parser.parseFromString(data.contents, 'text/html');
                 const baseUrl = new URL(targetUrl);
 
-                // --- 次の話を「リスト」から探す新ロジック ---
+                // 次話URL取得ロジック（プルダウンから）
                 nextChapterUrl = '';
                 const chapterOptions = Array.from(doc.querySelectorAll('#chapters option'));
-                
                 if (chapterOptions.length > 0) {
-                    // 現在選ばれているIDを見つける
                     const currentIdMatch = targetUrl.match(/id=(\d+)/);
                     if (currentIdMatch) {
                         const currentId = currentIdMatch[1];
-                        // リストの中で今のIDの「次」にあるやつを探す
-                        // ※サイトによっては並び順が逆（上が最新）なこともあるので注意
                         const currentIndex = chapterOptions.findIndex(opt => opt.value === currentId);
-                        
-                        // 基本は今のインデックスより「前」か「後」に次話がある
-                        // mangarw系は大体「前」が新しい（数字が上にある）ことが多い
-                        let nextOption = chapterOptions[currentIndex - 1]; // とりあえず一つ上を見てみる
-                        
+                        // リストの「一つ上」が次話と仮定（逆なら+1にする）
+                        let nextOption = chapterOptions[currentIndex - 1]; 
                         if (nextOption && nextOption.value) {
                             nextChapterUrl = baseUrl.origin + baseUrl.pathname + '?id=' + nextOption.value;
                         }
                     }
                 }
 
-                // --- 画像の抽出 ---
                 const images = doc.querySelectorAll('img.page-img, #viewer img, .page-container img');
                 resultDiv.innerHTML = ''; 
                 let validImages = 0;
@@ -111,11 +128,11 @@
                     document.getElementById('right-tap').style.display = 'block';
                     currentImageIndex = 0;
                 } else {
-                    resultDiv.innerHTML = '<div class="status">画像が見つかりませんでした。</div>';
+                    resultDiv.innerHTML = '<div class="status">画像が見つかりませんでした</div>';
                 }
 
             } catch (e) {
-                resultDiv.innerHTML = '<div class="status">読み込み失敗</div>';
+                resultDiv.innerHTML = '<div class="status">失敗しました</div>';
             }
         }
 
@@ -137,7 +154,7 @@
         }
 
         function goNextChapter(e) {
-            e.preventDefault();
+            e.stopPropagation(); // イベントの連鎖を止める
             if (nextChapterUrl) getImages(nextChapterUrl);
         }
     </script>
