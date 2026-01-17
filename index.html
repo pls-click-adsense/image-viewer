@@ -3,30 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>漫画縦読みビューア（自動次話対応）</title>
+    <title>漫画縦読みビューア（リスト解析版）</title>
     <style>
         body { font-family: sans-serif; margin: 0; padding: 0; background: #000; color: #fff; }
         .controls { padding: 40px 20px; text-align: center; background: #111; position: relative; z-index: 2000; }
         input[type="text"] { width: 80%; padding: 12px; background: #222; color: #fff; border: 1px solid #333; border-radius: 5px; font-size: 16px; }
-        button { margin-top: 15px; padding: 12px 25px; background: #cf1010; color: white; border: none; border-radius: 5px; font-weight: bold; }
+        button { margin-top: 15px; padding: 12px 25px; background: #cf1010; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; }
         #result { display: flex; flex-direction: column; align-items: center; width: 100%; }
-        #result img { width: 100%; max-width: 800px; height: auto; display: block; }
+        #result img { width: 100%; max-width: 900px; height: auto; display: block; }
         .tap-area { position: fixed; top: 0; height: 100vh; width: 50%; z-index: 1000; cursor: pointer; display: none; }
         #left-tap { left: 0; }
         #right-tap { right: 0; }
-        
-        /* 次の話への案内ボタン */
-        #next-chap-area { display: none; padding: 50px; text-align: center; background: #111; width: 100%; box-sizing: border-box; }
-        .next-btn { background: #28a745; padding: 20px 40px; font-size: 20px; text-decoration: none; color: white; border-radius: 10px; display: inline-block; }
+        #next-chap-area { display: none; padding: 60px 20px; text-align: center; background: #111; width: 100%; box-sizing: border-box; }
+        .next-btn { background: #28a745; padding: 20px 40px; font-size: 20px; text-decoration: none; color: white; border-radius: 10px; display: inline-block; font-weight: bold; cursor: pointer; }
+        .status { margin: 20px; color: #888; }
     </style>
 </head>
 <body>
 
     <div id="setup" class="controls">
-        <h2>URLを入力</h2>
-        <input type="text" id="urlInput" placeholder="https://...">
+        <h2>漫画のURLを入力</h2>
+        <input type="text" id="urlInput" placeholder="https://mangarw.com/read?id=82055">
         <br>
-        <button onclick="getImages()">表示を開始する</button>
+        <button onclick="getImages()">読み込み開始</button>
     </div>
 
     <div id="left-tap" class="tap-area" onclick="scrollImage(-1)"></div>
@@ -49,11 +48,10 @@
             let targetUrl = input;
             if (!targetUrl.startsWith('http')) targetUrl = 'https://' + targetUrl;
 
-            // リセット
             const resultDiv = document.getElementById('result');
-            resultDiv.innerHTML = '読み込み中...';
+            resultDiv.innerHTML = '<div class="status">読み込み中...</div>';
             document.getElementById('next-chap-area').style.display = 'none';
-            window.scrollTo(0,0);
+            window.scrollTo(0, 0);
 
             try {
                 const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
@@ -64,35 +62,47 @@
                 const doc = parser.parseFromString(data.contents, 'text/html');
                 const baseUrl = new URL(targetUrl);
 
-                // 1. 次の話のリンクを探す
+                // --- 次の話を「リスト」から探す新ロジック ---
                 nextChapterUrl = '';
-                const links = doc.querySelectorAll('a');
-                for (let a of links) {
-                    const text = a.textContent;
-                    if (text.includes('次') || text.includes('Next') || text.includes('next')) {
-                        nextChapterUrl = new URL(a.getAttribute('href'), baseUrl.href).href;
-                        // 明らかに今のURLと違う場合のみ採用
-                        if (nextChapterUrl !== targetUrl) break;
+                const chapterOptions = Array.from(doc.querySelectorAll('#chapters option'));
+                
+                if (chapterOptions.length > 0) {
+                    // 現在選ばれているIDを見つける
+                    const currentIdMatch = targetUrl.match(/id=(\d+)/);
+                    if (currentIdMatch) {
+                        const currentId = currentIdMatch[1];
+                        // リストの中で今のIDの「次」にあるやつを探す
+                        // ※サイトによっては並び順が逆（上が最新）なこともあるので注意
+                        const currentIndex = chapterOptions.findIndex(opt => opt.value === currentId);
+                        
+                        // 基本は今のインデックスより「前」か「後」に次話がある
+                        // mangarw系は大体「前」が新しい（数字が上にある）ことが多い
+                        let nextOption = chapterOptions[currentIndex - 1]; // とりあえず一つ上を見てみる
+                        
+                        if (nextOption && nextOption.value) {
+                            nextChapterUrl = baseUrl.origin + baseUrl.pathname + '?id=' + nextOption.value;
+                        }
                     }
                 }
 
-                // 2. 画像を抽出
-                const images = doc.querySelectorAll('img');
+                // --- 画像の抽出 ---
+                const images = doc.querySelectorAll('img.page-img, #viewer img, .page-container img');
                 resultDiv.innerHTML = ''; 
                 let validImages = 0;
+
                 images.forEach((img) => {
                     let src = img.getAttribute('src');
-                    if (src && !src.startsWith('data:')) {
-                        try {
-                            const absoluteUrl = new URL(src, baseUrl.href).href;
-                            const newImg = document.createElement('img');
-                            newImg.src = absoluteUrl;
-                            newImg.id = 'img-' + validImages; 
-                            newImg.onerror = () => newImg.remove();
-                            resultDiv.appendChild(newImg);
-                            validImages++;
-                        } catch (e) {}
-                    }
+                    if (!src || src.startsWith('data:') || src.includes('logo')) return;
+
+                    try {
+                        const absoluteUrl = new URL(src, baseUrl.href).href;
+                        const newImg = document.createElement('img');
+                        newImg.src = absoluteUrl;
+                        newImg.id = 'img-' + validImages; 
+                        newImg.onerror = () => newImg.remove();
+                        resultDiv.appendChild(newImg);
+                        validImages++;
+                    } catch (e) {}
                 });
 
                 if (validImages > 0) {
@@ -100,10 +110,12 @@
                     document.getElementById('left-tap').style.display = 'block';
                     document.getElementById('right-tap').style.display = 'block';
                     currentImageIndex = 0;
+                } else {
+                    resultDiv.innerHTML = '<div class="status">画像が見つかりませんでした。</div>';
                 }
 
             } catch (e) {
-                alert('読み込みに失敗しました');
+                resultDiv.innerHTML = '<div class="status">読み込み失敗</div>';
             }
         }
 
@@ -113,13 +125,10 @@
 
             currentImageIndex += direction;
 
-            // 最後まで行ったら「次の話」ボタンを出す
             if (currentImageIndex >= images.length) {
-                currentImageIndex = images.length; // インデックスを固定
-                if (nextChapterUrl) {
-                    document.getElementById('next-chap-area').style.display = 'block';
-                    document.getElementById('next-chap-area').scrollIntoView({ behavior: 'smooth' });
-                }
+                currentImageIndex = images.length;
+                document.getElementById('next-chap-area').style.display = 'block';
+                document.getElementById('next-chap-area').scrollIntoView({ behavior: 'smooth' });
                 return;
             }
 
@@ -127,12 +136,9 @@
             images[currentImageIndex].scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
-        // 次の話を読み込む関数
         function goNextChapter(e) {
             e.preventDefault();
-            if (nextChapterUrl) {
-                getImages(nextChapterUrl);
-            }
+            if (nextChapterUrl) getImages(nextChapterUrl);
         }
     </script>
 </body>
