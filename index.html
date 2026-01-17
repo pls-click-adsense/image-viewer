@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>漫画縦読みビューア（ボタン修正版）</title>
+    <title>漫画ビューア（ID不規則対応版）</title>
     <style>
         body { font-family: sans-serif; margin: 0; padding: 0; background: #000; color: #fff; }
         .controls { padding: 40px 20px; text-align: center; background: #111; position: relative; z-index: 2000; }
@@ -13,33 +13,30 @@
         #result { display: flex; flex-direction: column; align-items: center; width: 100%; }
         #result img { width: 100%; max-width: 900px; height: auto; display: block; }
         
-        /* タップ判定エリア */
         .tap-area { position: fixed; top: 0; height: 100vh; width: 50%; z-index: 1000; cursor: pointer; display: none; }
         #left-tap { left: 0; }
         #right-tap { right: 0; }
         
-        /* 次の話ボタンエリア */
         #next-chap-area { 
             display: none; 
-            padding: 80px 20px; 
+            padding: 100px 20px; 
             text-align: center; 
             background: #111; 
             width: 100%; 
             box-sizing: border-box; 
             position: relative; 
-            z-index: 2000; /* ←ここ！タップエリア(1000)より上に設定 */
+            z-index: 3000; 
         }
         .next-btn { 
             background: #28a745; 
             padding: 25px 50px; 
             font-size: 22px; 
-            text-decoration: none; 
             color: white; 
             border-radius: 12px; 
             display: inline-block; 
             font-weight: bold; 
             cursor: pointer;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            border: none;
         }
         .status { margin: 20px; color: #888; }
     </style>
@@ -47,8 +44,8 @@
 <body>
 
     <div id="setup" class="controls">
-        <h2>漫画のURLを入力</h2>
-        <input type="text" id="urlInput" placeholder="https://...">
+        <h2>URLを入力</h2>
+        <input type="text" id="urlInput" placeholder="https://mangarw.com/read?id=82055">
         <br>
         <button onclick="getImages()">読み込み開始</button>
     </div>
@@ -59,7 +56,8 @@
     <div id="result"></div>
 
     <div id="next-chap-area">
-        <a id="nextLink" class="next-btn" onclick="goNextChapter(event)">次の話を読み込む</a>
+        <button id="nextBtn" class="next-btn" onclick="goNextChapter()">次の話を読み込む</button>
+        <div id="debug-info" style="font-size:12px; color:#666; margin-top:15px;"></div>
     </div>
 
     <script>
@@ -74,7 +72,7 @@
             if (!targetUrl.startsWith('http')) targetUrl = 'https://' + targetUrl;
 
             const resultDiv = document.getElementById('result');
-            resultDiv.innerHTML = '<div class="status">読み込み中...</div>';
+            resultDiv.innerHTML = '<div class="status">データを取得中...</div>';
             document.getElementById('next-chap-area').style.display = 'none';
             window.scrollTo(0, 0);
 
@@ -86,24 +84,39 @@
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(data.contents, 'text/html');
                 const baseUrl = new URL(targetUrl);
+                const currentId = new URL(targetUrl).searchParams.get('id');
 
-                // 次話URL取得ロジック（プルダウンから）
+                // --- 次の話のURLを探す（超強化版） ---
                 nextChapterUrl = '';
-                const chapterOptions = Array.from(doc.querySelectorAll('#chapters option'));
-                if (chapterOptions.length > 0) {
-                    const currentIdMatch = targetUrl.match(/id=(\d+)/);
-                    if (currentIdMatch) {
-                        const currentId = currentIdMatch[1];
-                        const currentIndex = chapterOptions.findIndex(opt => opt.value === currentId);
-                        // リストの「一つ上」が次話と仮定（逆なら+1にする）
-                        let nextOption = chapterOptions[currentIndex - 1]; 
-                        if (nextOption && nextOption.value) {
-                            nextChapterUrl = baseUrl.origin + baseUrl.pathname + '?id=' + nextOption.value;
-                        }
+                
+                // 1. プルダウンを徹底的に探す
+                const options = Array.from(doc.querySelectorAll('option'));
+                const currentIndex = options.findIndex(opt => opt.value === currentId);
+                
+                // プルダウンがあれば、その「次」の項目を取得
+                if (currentIndex !== -1) {
+                    // mangarw系は上が新しいことが多いので、基本は currentIndex - 1
+                    // 1話なら次は上にないので、その場合は +1 を見る
+                    let nextOpt = options[currentIndex - 1] || options[currentIndex + 1];
+                    if (nextOpt && nextOpt.value && nextOpt.value !== currentId) {
+                        nextChapterUrl = `${baseUrl.origin}${baseUrl.pathname}?id=${nextOpt.value}`;
                     }
                 }
 
-                const images = doc.querySelectorAll('img.page-img, #viewer img, .page-container img');
+                // 2. プルダウンでダメなら「next-chapter」クラスなどのリンクを探す
+                if (!nextChapterUrl) {
+                    const nextLink = doc.querySelector('.next-chapter, [data-reader-next], a[href*="id="]');
+                    if (nextLink) {
+                        const href = nextLink.getAttribute('href');
+                        const potentialUrl = new URL(href, baseUrl.href).href;
+                        if (potentialUrl !== targetUrl) nextChapterUrl = potentialUrl;
+                    }
+                }
+
+                document.getElementById('debug-info').innerText = '次の候補: ' + (nextChapterUrl || '見つからず');
+
+                // --- 画像の抽出 ---
+                const images = doc.querySelectorAll('img.page-img, .page-container img, #viewer img');
                 resultDiv.innerHTML = ''; 
                 let validImages = 0;
 
@@ -111,15 +124,12 @@
                     let src = img.getAttribute('src');
                     if (!src || src.startsWith('data:') || src.includes('logo')) return;
 
-                    try {
-                        const absoluteUrl = new URL(src, baseUrl.href).href;
-                        const newImg = document.createElement('img');
-                        newImg.src = absoluteUrl;
-                        newImg.id = 'img-' + validImages; 
-                        newImg.onerror = () => newImg.remove();
-                        resultDiv.appendChild(newImg);
-                        validImages++;
-                    } catch (e) {}
+                    const absoluteUrl = new URL(src, baseUrl.href).href;
+                    const newImg = document.createElement('img');
+                    newImg.src = absoluteUrl;
+                    newImg.id = 'img-' + validImages; 
+                    resultDiv.appendChild(newImg);
+                    validImages++;
                 });
 
                 if (validImages > 0) {
@@ -127,12 +137,10 @@
                     document.getElementById('left-tap').style.display = 'block';
                     document.getElementById('right-tap').style.display = 'block';
                     currentImageIndex = 0;
-                } else {
-                    resultDiv.innerHTML = '<div class="status">画像が見つかりませんでした</div>';
                 }
 
             } catch (e) {
-                resultDiv.innerHTML = '<div class="status">失敗しました</div>';
+                resultDiv.innerHTML = '<div class="status">エラーが発生しました</div>';
             }
         }
 
@@ -153,9 +161,17 @@
             images[currentImageIndex].scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
-        function goNextChapter(e) {
-            e.stopPropagation(); // イベントの連鎖を止める
-            if (nextChapterUrl) getImages(nextChapterUrl);
+        function goNextChapter() {
+            if (nextChapterUrl) {
+                document.getElementById('nextBtn').innerText = '読み込み中...';
+                getImages(nextChapterUrl);
+                // ボタンの文字を元に戻す
+                setTimeout(() => {
+                    document.getElementById('nextBtn').innerText = '次の話を読み込む';
+                }, 2000);
+            } else {
+                alert('次の話のURLが自動で見つかりませんでした');
+            }
         }
     </script>
 </body>
