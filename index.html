@@ -3,152 +3,126 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>漫画ビューア</title>
+    <title>漫画縦読みビューア</title>
     <style>
-        /* 黒ベースのデザインで漫画を読みやすくするよ */
         body { 
             font-family: sans-serif; 
-            margin: 0; 
-            padding: 0; 
-            background: #121212; 
-            color: #eeeeee; 
-            display: flex;
-            flex-direction: column;
-            align-items: center;
+            margin: 0; padding: 0; 
+            background: #000; color: #fff; 
         }
 
-        /* 入力エリアのスタイル */
+        /* 最初の入力画面 */
         .controls {
-            width: 100%;
-            max-width: 600px;
-            padding: 20px;
-            box-sizing: border-box;
+            padding: 40px 20px;
             text-align: center;
-            background: #1f1f1f;
-            position: sticky; /* スクロールしても入力欄を上に固定 */
-            top: 0;
-            z-index: 100;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            background: #111;
         }
 
         input[type="text"] {
-            width: 80%;
-            padding: 10px;
-            border: none;
-            border-radius: 5px;
-            margin-bottom: 10px;
+            width: 80%; padding: 12px;
+            background: #222; color: #fff;
+            border: 1px solid #333; border-radius: 5px;
         }
 
         button {
-            padding: 10px 20px;
-            background: #007bff;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
+            margin-top: 15px; padding: 12px 25px;
+            background: #cf1010; color: white;
+            border: none; border-radius: 5px; font-weight: bold;
         }
 
-        button:hover {
-            background: #0056b3;
-        }
-
-        /* 画像を表示するエリア */
+        /* 画像リスト */
         #result {
+            display: flex; flex-direction: column; align-items: center;
             width: 100%;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            margin-top: 10px;
         }
 
-        /* 画像の設定：横幅いっぱい、縦に並べる */
         #result img {
-            width: 100%;
-            max-width: 900px; /* 広がりすぎて画質が落ちないように制限（好みで変えてね） */
-            height: auto;
-            margin-bottom: 0; /* ページ間の隙間をなくす */
-            display: block;
+            width: 100%; max-width: 800px;
+            height: auto; display: block;
         }
 
-        .status {
-            margin: 20px;
-            color: #aaa;
+        /* タップ判定用の透明エリア */
+        .tap-area {
+            position: fixed; top: 0; height: 100vh; width: 50%;
+            z-index: 1000; cursor: pointer;
+            /* 開発中に範囲を見たい時は background: rgba(255,0,0,0.1); とかにしてみて */
         }
+        #left-tap { left: 0; }
+        #right-tap { right: 0; }
     </style>
 </head>
 <body>
 
-    <div class="controls">
-        <h3>サイトのURLを入れてね</h3>
-        <input type="text" id="urlInput" placeholder="https://example.com/manga/1">
-        <button onclick="getImages()">表示開始</button>
+    <div id="setup" class="controls">
+        <h2>URLを入力</h2>
+        <input type="text" id="urlInput" placeholder="https://...">
+        <br>
+        <button onclick="getImages()">表示を開始する</button>
     </div>
+
+    <div id="left-tap" class="tap-area" onclick="scrollImage(-1)"></div>
+    <div id="right-tap" class="tap-area" onclick="scrollImage(1)"></div>
 
     <div id="result"></div>
 
     <script>
+        let currentImageIndex = -1;
+
         async function getImages() {
             const input = document.getElementById('urlInput').value.trim();
-            const resultDiv = document.getElementById('result');
-            
-            if (!input) {
-                alert('URLを入れてね！');
-                return;
-            }
+            if (!input) return;
 
             let targetUrl = input;
-            if (!targetUrl.startsWith('http')) {
-                targetUrl = 'https://' + targetUrl;
-            }
-
-            resultDiv.innerHTML = '<div class="status">読み込み中...（画像が多いと時間がかかるよ）</div>';
+            if (!targetUrl.startsWith('http')) targetUrl = 'https://' + targetUrl;
 
             try {
-                // CORS回避のためのプロキシ
                 const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
                 const response = await fetch(proxyUrl);
                 const data = await response.json();
                 
-                if (!data.contents) {
-                    throw new Error('ページの中身を取得できなかったよ。');
-                }
-
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(data.contents, 'text/html');
                 const images = doc.querySelectorAll('img');
                 const baseUrl = new URL(targetUrl);
 
+                const resultDiv = document.getElementById('result');
                 resultDiv.innerHTML = ''; 
 
-                let count = 0;
-                images.forEach(img => {
+                images.forEach((img, index) => {
                     let src = img.getAttribute('src');
-                    
-                    // 不要な画像（アイコンや極小画像）を除外
-                    if (!src || src.startsWith('data:')) return;
-
-                    try {
-                        const absoluteUrl = new URL(src, baseUrl.href).href;
-                        
-                        const newImg = document.createElement('img');
-                        newImg.src = absoluteUrl;
-                        
-                        // 画像が読み込めなかった時のエラーハンドリング
-                        newImg.onerror = () => newImg.style.display = 'none';
-                        
-                        resultDiv.appendChild(newImg);
-                        count++;
-                    } catch (e) {}
+                    if (src && !src.startsWith('data:')) {
+                        try {
+                            const absoluteUrl = new URL(src, baseUrl.href).href;
+                            const newImg = document.createElement('img');
+                            newImg.src = absoluteUrl;
+                            newImg.id = 'img-' + index; // IDを振っておく
+                            newImg.onerror = () => newImg.remove();
+                            resultDiv.appendChild(newImg);
+                        } catch (e) {}
+                    }
                 });
 
-                if (count === 0) {
-                    resultDiv.innerHTML = '<div class="status">画像が見つかりませんでした。</div>';
-                }
+                document.getElementById('setup').style.display = 'none';
+                currentImageIndex = 0;
 
             } catch (e) {
-                resultDiv.innerHTML = `<div class="status" style="color:red;">エラー: ${e.message}</div>`;
-                console.error(e);
+                alert('エラーが発生しました');
             }
+        }
+
+        // 指定した枚数分だけ画像をスキップしてスクロールする
+        function scrollImage(direction) {
+            const images = document.querySelectorAll('#result img');
+            if (images.length === 0) return;
+
+            currentImageIndex += direction;
+
+            // 範囲外に行かないように制限
+            if (currentImageIndex < 0) currentImageIndex = 0;
+            if (currentImageIndex >= images.length) currentImageIndex = images.length - 1;
+
+            // その画像の位置までスムーズに移動
+            images[currentImageIndex].scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     </script>
 </body>
