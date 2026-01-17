@@ -3,19 +3,43 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>漫画ビューア（ID不規則対応版）</title>
+    <title>漫画ビューア（画像タップ版）</title>
     <style>
-        body { font-family: sans-serif; margin: 0; padding: 0; background: #000; color: #fff; }
-        .controls { padding: 40px 20px; text-align: center; background: #111; position: relative; z-index: 2000; }
+        body { font-family: sans-serif; margin: 0; padding: 0; background: #000; color: #fff; overflow-x: hidden; }
+        .controls { padding: 40px 20px; text-align: center; background: #111; position: relative; z-index: 3000; }
         input[type="text"] { width: 80%; padding: 12px; background: #222; color: #fff; border: 1px solid #333; border-radius: 5px; font-size: 16px; }
         button { margin-top: 15px; padding: 12px 25px; background: #cf1010; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; }
         
         #result { display: flex; flex-direction: column; align-items: center; width: 100%; }
-        #result img { width: 100%; max-width: 900px; height: auto; display: block; }
-        
-        .tap-area { position: fixed; top: 0; height: 100vh; width: 50%; z-index: 1000; cursor: pointer; display: none; }
-        #left-tap { left: 0; }
-        #right-tap { right: 0; }
+
+        /* 各画像を包む枠 */
+        .img-container {
+            position: relative;
+            width: 100%;
+            max-width: 900px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .img-container img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        /* 画像の左右タップエリア */
+        .img-tap {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            width: 50%;
+            z-index: 10;
+            cursor: pointer;
+            /* デバッグ用：rgba(255,0,0,0.1) にするとエリアが見えるよ */
+            background: rgba(0,0,0,0); 
+        }
+        .img-prev { left: 0; }
+        .img-next { right: 0; }
         
         #next-chap-area { 
             display: none; 
@@ -23,7 +47,6 @@
             text-align: center; 
             background: #111; 
             width: 100%; 
-            box-sizing: border-box; 
             position: relative; 
             z-index: 3000; 
         }
@@ -50,14 +73,10 @@
         <button onclick="getImages()">読み込み開始</button>
     </div>
 
-    <div id="left-tap" class="tap-area" onclick="scrollImage(-1)"></div>
-    <div id="right-tap" class="tap-area" onclick="scrollImage(1)"></div>
-
     <div id="result"></div>
 
     <div id="next-chap-area">
         <button id="nextBtn" class="next-btn" onclick="goNextChapter()">次の話を読み込む</button>
-        <div id="debug-info" style="font-size:12px; color:#666; margin-top:15px;"></div>
     </div>
 
     <script>
@@ -84,38 +103,20 @@
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(data.contents, 'text/html');
                 const baseUrl = new URL(targetUrl);
-                const currentId = new URL(targetUrl).searchParams.get('id');
+                const currentId = baseUrl.searchParams.get('id');
 
-                // --- 次の話のURLを探す（超強化版） ---
+                // 次話のURL探し
                 nextChapterUrl = '';
-                
-                // 1. プルダウンを徹底的に探す
                 const options = Array.from(doc.querySelectorAll('option'));
                 const currentIndex = options.findIndex(opt => opt.value === currentId);
-                
-                // プルダウンがあれば、その「次」の項目を取得
                 if (currentIndex !== -1) {
-                    // mangarw系は上が新しいことが多いので、基本は currentIndex - 1
-                    // 1話なら次は上にないので、その場合は +1 を見る
                     let nextOpt = options[currentIndex - 1] || options[currentIndex + 1];
-                    if (nextOpt && nextOpt.value && nextOpt.value !== currentId) {
+                    if (nextOpt && nextOpt.value !== currentId) {
                         nextChapterUrl = `${baseUrl.origin}${baseUrl.pathname}?id=${nextOpt.value}`;
                     }
                 }
 
-                // 2. プルダウンでダメなら「next-chapter」クラスなどのリンクを探す
-                if (!nextChapterUrl) {
-                    const nextLink = doc.querySelector('.next-chapter, [data-reader-next], a[href*="id="]');
-                    if (nextLink) {
-                        const href = nextLink.getAttribute('href');
-                        const potentialUrl = new URL(href, baseUrl.href).href;
-                        if (potentialUrl !== targetUrl) nextChapterUrl = potentialUrl;
-                    }
-                }
-
-                document.getElementById('debug-info').innerText = '次の候補: ' + (nextChapterUrl || '見つからず');
-
-                // --- 画像の抽出 ---
+                // 画像の抽出と個別タップエリアの作成
                 const images = doc.querySelectorAll('img.page-img, .page-container img, #viewer img');
                 resultDiv.innerHTML = ''; 
                 let validImages = 0;
@@ -125,17 +126,36 @@
                     if (!src || src.startsWith('data:') || src.includes('logo')) return;
 
                     const absoluteUrl = new URL(src, baseUrl.href).href;
+                    
+                    // コンテナ作成
+                    const container = document.createElement('div');
+                    container.className = 'img-container';
+                    
+                    // 画像本体
                     const newImg = document.createElement('img');
                     newImg.src = absoluteUrl;
-                    newImg.id = 'img-' + validImages; 
-                    resultDiv.appendChild(newImg);
+                    newImg.id = 'img-' + validImages;
+                    
+                    // 左タップ（戻る）
+                    const prevTap = document.createElement('div');
+                    prevTap.className = 'img-tap img-prev';
+                    prevTap.onclick = () => scrollImage(-1);
+                    
+                    // 右タップ（進む）
+                    const nextTap = document.createElement('div');
+                    nextTap.className = 'img-tap img-next';
+                    nextTap.onclick = () => scrollImage(1);
+
+                    container.appendChild(newImg);
+                    container.appendChild(prevTap);
+                    container.appendChild(nextTap);
+                    resultDiv.appendChild(container);
+                    
                     validImages++;
                 });
 
                 if (validImages > 0) {
                     document.getElementById('setup').style.display = 'none';
-                    document.getElementById('left-tap').style.display = 'block';
-                    document.getElementById('right-tap').style.display = 'block';
                     currentImageIndex = 0;
                 }
 
@@ -145,7 +165,7 @@
         }
 
         function scrollImage(direction) {
-            const images = document.querySelectorAll('#result img');
+            const images = document.querySelectorAll('.img-container img');
             if (images.length === 0) return;
 
             currentImageIndex += direction;
@@ -165,12 +185,6 @@
             if (nextChapterUrl) {
                 document.getElementById('nextBtn').innerText = '読み込み中...';
                 getImages(nextChapterUrl);
-                // ボタンの文字を元に戻す
-                setTimeout(() => {
-                    document.getElementById('nextBtn').innerText = '次の話を読み込む';
-                }, 2000);
-            } else {
-                alert('次の話のURLが自動で見つかりませんでした');
             }
         }
     </script>
