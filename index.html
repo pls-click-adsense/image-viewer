@@ -3,53 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>漫画縦読みビューア</title>
+    <title>漫画縦読みビューア（自動次話対応）</title>
     <style>
-        body { 
-            font-family: sans-serif; 
-            margin: 0; padding: 0; 
-            background: #000; color: #fff; 
-        }
-
-        .controls {
-            padding: 40px 20px;
-            text-align: center;
-            background: #111;
-            position: relative;
-            z-index: 2000; /* 入力欄を一番手前に持ってくる */
-        }
-
-        input[type="text"] {
-            width: 80%; padding: 12px;
-            background: #222; color: #fff;
-            border: 1px solid #333; border-radius: 5px;
-            font-size: 16px; /* スマホでズームしないように16px以上 */
-        }
-
-        button {
-            margin-top: 15px; padding: 12px 25px;
-            background: #cf1010; color: white;
-            border: none; border-radius: 5px; font-weight: bold;
-        }
-
-        #result {
-            display: flex; flex-direction: column; align-items: center;
-            width: 100%;
-        }
-
-        #result img {
-            width: 100%; max-width: 800px;
-            height: auto; display: block;
-        }
-
-        /* タップ判定用のエリア（最初は隠しておく） */
-        .tap-area {
-            position: fixed; top: 0; height: 100vh; width: 50%;
-            z-index: 1000; cursor: pointer;
-            display: none; /* ← ここがポイント！最初はオフ */
-        }
+        body { font-family: sans-serif; margin: 0; padding: 0; background: #000; color: #fff; }
+        .controls { padding: 40px 20px; text-align: center; background: #111; position: relative; z-index: 2000; }
+        input[type="text"] { width: 80%; padding: 12px; background: #222; color: #fff; border: 1px solid #333; border-radius: 5px; font-size: 16px; }
+        button { margin-top: 15px; padding: 12px 25px; background: #cf1010; color: white; border: none; border-radius: 5px; font-weight: bold; }
+        #result { display: flex; flex-direction: column; align-items: center; width: 100%; }
+        #result img { width: 100%; max-width: 800px; height: auto; display: block; }
+        .tap-area { position: fixed; top: 0; height: 100vh; width: 50%; z-index: 1000; cursor: pointer; display: none; }
         #left-tap { left: 0; }
         #right-tap { right: 0; }
+        
+        /* 次の話への案内ボタン */
+        #next-chap-area { display: none; padding: 50px; text-align: center; background: #111; width: 100%; box-sizing: border-box; }
+        .next-btn { background: #28a745; padding: 20px 40px; font-size: 20px; text-decoration: none; color: white; border-radius: 10px; display: inline-block; }
     </style>
 </head>
 <body>
@@ -66,15 +34,26 @@
 
     <div id="result"></div>
 
+    <div id="next-chap-area">
+        <a id="nextLink" href="#" class="next-btn" onclick="goNextChapter(event)">次の話を読み込む</a>
+    </div>
+
     <script>
         let currentImageIndex = -1;
+        let nextChapterUrl = '';
 
-        async function getImages() {
-            const input = document.getElementById('urlInput').value.trim();
+        async function getImages(customUrl = null) {
+            const input = customUrl || document.getElementById('urlInput').value.trim();
             if (!input) return;
 
             let targetUrl = input;
             if (!targetUrl.startsWith('http')) targetUrl = 'https://' + targetUrl;
+
+            // リセット
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '読み込み中...';
+            document.getElementById('next-chap-area').style.display = 'none';
+            window.scrollTo(0,0);
 
             try {
                 const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
@@ -83,14 +62,25 @@
                 
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(data.contents, 'text/html');
-                const images = doc.querySelectorAll('img');
                 const baseUrl = new URL(targetUrl);
 
-                const resultDiv = document.getElementById('result');
-                resultDiv.innerHTML = ''; 
+                // 1. 次の話のリンクを探す
+                nextChapterUrl = '';
+                const links = doc.querySelectorAll('a');
+                for (let a of links) {
+                    const text = a.textContent;
+                    if (text.includes('次') || text.includes('Next') || text.includes('next')) {
+                        nextChapterUrl = new URL(a.getAttribute('href'), baseUrl.href).href;
+                        // 明らかに今のURLと違う場合のみ採用
+                        if (nextChapterUrl !== targetUrl) break;
+                    }
+                }
 
+                // 2. 画像を抽出
+                const images = doc.querySelectorAll('img');
+                resultDiv.innerHTML = ''; 
                 let validImages = 0;
-                images.forEach((img, index) => {
+                images.forEach((img) => {
                     let src = img.getAttribute('src');
                     if (src && !src.startsWith('data:')) {
                         try {
@@ -106,13 +96,10 @@
                 });
 
                 if (validImages > 0) {
-                    // 画像の読み込みが始まったら、入力欄を消してタップエリアを有効にする
                     document.getElementById('setup').style.display = 'none';
                     document.getElementById('left-tap').style.display = 'block';
                     document.getElementById('right-tap').style.display = 'block';
                     currentImageIndex = 0;
-                } else {
-                    alert('画像が見つかりませんでした');
                 }
 
             } catch (e) {
@@ -125,10 +112,27 @@
             if (images.length === 0) return;
 
             currentImageIndex += direction;
-            if (currentImageIndex < 0) currentImageIndex = 0;
-            if (currentImageIndex >= images.length) currentImageIndex = images.length - 1;
 
+            // 最後まで行ったら「次の話」ボタンを出す
+            if (currentImageIndex >= images.length) {
+                currentImageIndex = images.length; // インデックスを固定
+                if (nextChapterUrl) {
+                    document.getElementById('next-chap-area').style.display = 'block';
+                    document.getElementById('next-chap-area').scrollIntoView({ behavior: 'smooth' });
+                }
+                return;
+            }
+
+            if (currentImageIndex < 0) currentImageIndex = 0;
             images[currentImageIndex].scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        // 次の話を読み込む関数
+        function goNextChapter(e) {
+            e.preventDefault();
+            if (nextChapterUrl) {
+                getImages(nextChapterUrl);
+            }
         }
     </script>
 </body>
