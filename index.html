@@ -3,62 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>漫画ビューア（タップ修正版）</title>
+    <title>万能漫画ビューア</title>
     <style>
         body { font-family: sans-serif; margin: 0; padding: 0; background: #000; color: #fff; overflow-x: hidden; }
         .controls { padding: 40px 20px; text-align: center; background: #111; position: relative; z-index: 3000; }
         input[type="text"] { width: 80%; padding: 12px; background: #222; color: #fff; border: 1px solid #333; border-radius: 5px; font-size: 16px; }
         button { margin-top: 15px; padding: 12px 25px; background: #cf1010; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; }
-        
         #result { display: flex; flex-direction: column; align-items: center; width: 100%; }
-
-        .img-container {
-            position: relative;
-            width: 100%;
-            max-width: 900px;
-            display: flex;
-            justify-content: center;
-        }
-
-        .img-container img {
-            width: 100%;
-            height: auto;
-            display: block;
-        }
-
-        .img-tap {
-            position: absolute;
-            top: 0;
-            height: 100%;
-            width: 50%;
-            z-index: 10;
-            cursor: pointer;
-            background: rgba(0,0,0,0); 
-        }
+        .img-container { position: relative; width: 100%; max-width: 900px; display: flex; justify-content: center; }
+        .img-container img { width: 100%; height: auto; display: block; }
+        .img-tap { position: absolute; top: 0; height: 100%; width: 50%; z-index: 10; cursor: pointer; background: rgba(0,0,0,0); }
         .img-prev { left: 0; }
         .img-next { right: 0; }
-        
-        #next-chap-area { 
-            display: none; 
-            padding: 100px 20px; 
-            text-align: center; 
-            background: #111; 
-            width: 100%; 
-            position: relative; 
-            z-index: 3000; 
-        }
-        .next-btn { 
-            background: #28a745; 
-            padding: 25px 50px; 
-            font-size: 22px; 
-            color: white; 
-            border-radius: 12px; 
-            display: inline-block; 
-            font-weight: bold; 
-            cursor: pointer;
-            border: none;
-            text-decoration: none;
-        }
+        #next-chap-area { display: none; padding: 100px 20px; text-align: center; background: #111; width: 100%; position: relative; z-index: 3000; }
+        .next-btn { background: #28a745; padding: 25px 50px; font-size: 22px; color: white; border-radius: 12px; display: inline-block; font-weight: bold; cursor: pointer; border: none; text-decoration: none; }
         .status { margin: 20px; color: #888; }
     </style>
 </head>
@@ -66,7 +24,7 @@
 
     <div id="setup" class="controls">
         <h2>URLを入力</h2>
-        <input type="text" id="urlInput" placeholder="URLを入れてね">
+        <input type="text" id="urlInput" placeholder="漫画のURLを貼り付けてね">
         <br>
         <button onclick="getImages()">読み込み開始</button>
     </div>
@@ -89,10 +47,10 @@
             if (!targetUrl.startsWith('http')) targetUrl = 'https://' + targetUrl;
 
             const resultDiv = document.getElementById('result');
-            resultDiv.innerHTML = '<div class="status">読み込み中...</div>';
+            resultDiv.innerHTML = '<div class="status">画像をスキャン中...</div>';
             document.getElementById('next-chap-area').style.display = 'none';
             window.scrollTo(0, 0);
-            currentImageIndex = 0; // インデックスをリセット
+            currentImageIndex = 0;
 
             try {
                 const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
@@ -102,92 +60,89 @@
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(data.contents, 'text/html');
                 const baseUrl = new URL(targetUrl);
-                const currentId = baseUrl.searchParams.get('id');
 
-                // 次話のURL探し
+                // --- 次の話のURL探し (汎用版) ---
                 nextChapterUrl = '';
+                // 1. セレクトボックスから探す
+                const currentId = baseUrl.searchParams.get('id');
                 const options = Array.from(doc.querySelectorAll('option'));
-                const currentIndexInList = options.findIndex(opt => opt.value === currentId);
-                if (currentIndexInList !== -1) {
-                    let nextOpt = options[currentIndexInList - 1] || options[currentIndexInList + 1];
-                    if (nextOpt && nextOpt.value !== currentId) {
-                        nextChapterUrl = `${baseUrl.origin}${baseUrl.pathname}?id=${nextOpt.value}`;
-                    }
+                const optIdx = options.findIndex(opt => opt.value === currentId || targetUrl.includes(opt.value));
+                if (optIdx !== -1) {
+                    let nextOpt = options[optIdx - 1] || options[optIdx + 1];
+                    if (nextOpt) nextChapterUrl = new URL(baseUrl.pathname + baseUrl.search, baseUrl.origin).href.replace(/id=[^&]+/, 'id=' + nextOpt.value);
+                }
+                // 2. 「次へ」ボタンっぽいリンクから探す
+                if (!nextChapterUrl) {
+                    const nextLink = doc.querySelector('a[rel="next"], .next, .next-chapter, a:contains("次")');
+                    if (nextLink) nextChapterUrl = new URL(nextLink.getAttribute('href'), baseUrl.href).href;
                 }
 
-                // 画像の抽出
-                const images = doc.querySelectorAll('img.page-img, .page-container img, #viewer img, main img');
+                // --- 画像の抽出 (超広範囲) ---
+                // サイト独自のクラス名に頼らず、本文エリアにありそうな画像を全部拾う
+                const allImgs = Array.from(doc.querySelectorAll('img'));
                 resultDiv.innerHTML = ''; 
                 let validImages = 0;
 
-                images.forEach((img) => {
-                    let src = img.getAttribute('src');
-                    if (!src || src.startsWith('data:') || src.includes('logo')) return;
+                allImgs.forEach((img) => {
+                    // data-src や data-original など、遅延読み込み用の属性もチェック
+                    let src = img.getAttribute('data-src') || img.getAttribute('data-original') || img.getAttribute('src');
+                    
+                    if (!src || src.startsWith('data:') || src.includes('logo') || src.includes('icon') || src.includes('avatar')) return;
 
-                    const absoluteUrl = new URL(src, baseUrl.href).href;
-                    const index = validImages; // 今の画像の番号を固定
-                    
-                    const container = document.createElement('div');
-                    container.className = 'img-container';
-                    
-                    const newImg = document.createElement('img');
-                    newImg.src = absoluteUrl;
-                    newImg.id = 'img-' + index;
-                    
-                    const prevTap = document.createElement('div');
-                    prevTap.className = 'img-tap img-prev';
-                    // 叩いた画像の番号を基準に移動
-                    prevTap.onclick = () => jumpTo(index - 1);
-                    
-                    const nextTap = document.createElement('div');
-                    nextTap.className = 'img-tap img-next';
-                    // 叩いた画像の番号を基準に移動
-                    nextTap.onclick = () => jumpTo(index + 1);
+                    try {
+                        const absoluteUrl = new URL(src, baseUrl.href).href;
+                        const index = validImages;
+                        
+                        const container = document.createElement('div');
+                        container.className = 'img-container';
+                        
+                        const newImg = document.createElement('img');
+                        newImg.src = absoluteUrl;
+                        newImg.id = 'img-' + index;
+                        newImg.onerror = () => container.remove(); // 読み込めない画像は消す
+                        
+                        const prevTap = document.createElement('div');
+                        prevTap.className = 'img-tap img-prev';
+                        prevTap.onclick = () => jumpTo(index - 1);
+                        
+                        const nextTap = document.createElement('div');
+                        nextTap.className = 'img-tap img-next';
+                        nextTap.onclick = () => jumpTo(index + 1);
 
-                    container.appendChild(newImg);
-                    container.appendChild(prevTap);
-                    container.appendChild(nextTap);
-                    resultDiv.appendChild(container);
-                    
-                    validImages++;
+                        container.appendChild(newImg);
+                        container.appendChild(prevTap);
+                        container.appendChild(nextTap);
+                        resultDiv.appendChild(container);
+                        validImages++;
+                    } catch (e) {}
                 });
 
                 if (validImages > 0) {
                     document.getElementById('setup').style.display = 'none';
                 } else {
-                    resultDiv.innerHTML = '<div class="status">画像が見つからんかった……</div>';
+                    resultDiv.innerHTML = '<div class="status">画像が見つからなかったよ。</div>';
                 }
 
             } catch (e) {
-                resultDiv.innerHTML = '<div class="status">エラーだね</div>';
+                resultDiv.innerHTML = '<div class="status">読み込みに失敗したみたい。</div>';
             }
         }
 
-        // 指定した番号の画像にジャンプする関数
         function jumpTo(index) {
             const containers = document.querySelectorAll('.img-container');
-            
-            if (index < 0) {
-                currentImageIndex = 0;
-            } else if (index >= containers.length) {
-                // 最後の画像を超えたら「次の話」エリアへ
-                currentImageIndex = containers.length;
+            if (index < 0) return;
+            if (index >= containers.length) {
                 document.getElementById('next-chap-area').style.display = 'block';
                 document.getElementById('next-chap-area').scrollIntoView({ behavior: 'smooth' });
                 return;
-            } else {
-                currentImageIndex = index;
             }
-            
+            currentImageIndex = index;
             containers[currentImageIndex].scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
         function goNextChapter() {
-            if (nextChapterUrl) {
-                getImages(nextChapterUrl);
-            } else {
-                alert('次の話のURLが見つからないよ。');
-            }
+            if (nextChapterUrl) getImages(nextChapterUrl);
+            else alert('次の話が見つからないから、URLを直接入れてね。');
         }
     </script>
 </body>
