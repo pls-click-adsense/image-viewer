@@ -11,17 +11,19 @@
             background: #000; color: #fff; 
         }
 
-        /* 最初の入力画面 */
         .controls {
             padding: 40px 20px;
             text-align: center;
             background: #111;
+            position: relative;
+            z-index: 2000; /* 入力欄を一番手前に持ってくる */
         }
 
         input[type="text"] {
             width: 80%; padding: 12px;
             background: #222; color: #fff;
             border: 1px solid #333; border-radius: 5px;
+            font-size: 16px; /* スマホでズームしないように16px以上 */
         }
 
         button {
@@ -30,7 +32,6 @@
             border: none; border-radius: 5px; font-weight: bold;
         }
 
-        /* 画像リスト */
         #result {
             display: flex; flex-direction: column; align-items: center;
             width: 100%;
@@ -41,11 +42,11 @@
             height: auto; display: block;
         }
 
-        /* タップ判定用の透明エリア */
+        /* タップ判定用のエリア（最初は隠しておく） */
         .tap-area {
             position: fixed; top: 0; height: 100vh; width: 50%;
             z-index: 1000; cursor: pointer;
-            /* 開発中に範囲を見たい時は background: rgba(255,0,0,0.1); とかにしてみて */
+            display: none; /* ← ここがポイント！最初はオフ */
         }
         #left-tap { left: 0; }
         #right-tap { right: 0; }
@@ -88,6 +89,7 @@
                 const resultDiv = document.getElementById('result');
                 resultDiv.innerHTML = ''; 
 
+                let validImages = 0;
                 images.forEach((img, index) => {
                     let src = img.getAttribute('src');
                     if (src && !src.startsWith('data:')) {
@@ -95,33 +97,37 @@
                             const absoluteUrl = new URL(src, baseUrl.href).href;
                             const newImg = document.createElement('img');
                             newImg.src = absoluteUrl;
-                            newImg.id = 'img-' + index; // IDを振っておく
+                            newImg.id = 'img-' + validImages; 
                             newImg.onerror = () => newImg.remove();
                             resultDiv.appendChild(newImg);
+                            validImages++;
                         } catch (e) {}
                     }
                 });
 
-                document.getElementById('setup').style.display = 'none';
-                currentImageIndex = 0;
+                if (validImages > 0) {
+                    // 画像の読み込みが始まったら、入力欄を消してタップエリアを有効にする
+                    document.getElementById('setup').style.display = 'none';
+                    document.getElementById('left-tap').style.display = 'block';
+                    document.getElementById('right-tap').style.display = 'block';
+                    currentImageIndex = 0;
+                } else {
+                    alert('画像が見つかりませんでした');
+                }
 
             } catch (e) {
-                alert('エラーが発生しました');
+                alert('読み込みに失敗しました');
             }
         }
 
-        // 指定した枚数分だけ画像をスキップしてスクロールする
         function scrollImage(direction) {
             const images = document.querySelectorAll('#result img');
             if (images.length === 0) return;
 
             currentImageIndex += direction;
-
-            // 範囲外に行かないように制限
             if (currentImageIndex < 0) currentImageIndex = 0;
             if (currentImageIndex >= images.length) currentImageIndex = images.length - 1;
 
-            // その画像の位置までスムーズに移動
             images[currentImageIndex].scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     </script>
